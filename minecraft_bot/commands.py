@@ -6,6 +6,8 @@ from queue import Queue, Empty
 from shared.timing_utils import log_execution_time
 from shared.shortcuts import ShortcutManager
 from minecraft_bot.stats import HypixelScraper
+from config.settings import BOT_USERNAME
+
 
 logger = logging.getLogger('minecraft_bot.commands')
 

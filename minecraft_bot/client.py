@@ -156,7 +156,6 @@ class MinecraftClient:
         """Message rent"""
         self.last_sender = sender
         
-        # Log plus détaillé pour debugger
         logger.debug(f"RAW MESSAGE: channel='{channel}', sender='{sender}', message='{message}'")
         
         # Nettoyage plus agressif du sender (enlever [GM] ou autres tags)
@@ -177,7 +176,7 @@ class MinecraftClient:
             # Appeler le callback si défini
             if self.on_chat_message:
                 logger.debug(f"CALLING CALLBACK with channel='{channel}', sender='{cleaned_sender}', message='{message}'")
-                # Appeler avec le sender nettoyé
+                # Utiliser le sender nettoyé ici, pas le sender original
                 self.on_chat_message(channel, cleaned_sender, message)
             else:
                 logger.warning(f"NO CALLBACK DEFINED for on_chat_message")
