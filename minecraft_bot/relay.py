@@ -25,13 +25,32 @@ class MinecraftDiscordRelay:
         self.app = Flask(__name__)
         self.setup_routes()
         
+        # Sauvegarde du callback existant (s'il existe)
+        self.original_chat_callback = self.minecraft_client.on_chat_message
+        
         # Set up callback for Minecraft -> Discord
-        self.minecraft_client.on_chat_message = self.handle_chat_message
+        # Utiliser une méthode de wrapper au lieu de remplacer directement
+        self._setup_chat_callback()
         
         # Thread management
         self.processing_thread = None
         self.flask_thread = None
         self.running = False
+        
+    def _setup_chat_callback(self):
+    """Configure le callback pour les messages du chat"""
+    original_callback = self.minecraft_client.on_chat_message
+    
+    def chat_message_wrapper(channel, sender, message):
+        # D'abord appeler notre propre handler
+        self.handle_chat_message(channel, sender, message)
+        
+        # Puis appeler le callback original s'il existe
+        if original_callback:
+            original_callback(channel, sender, message)
+    
+    # Définir notre wrapper comme nouveau callback
+    self.minecraft_client.on_chat_message = chat_message_wrapper
     
     def setup_routes(self):
         """Sets up Flask routes for the webhook"""

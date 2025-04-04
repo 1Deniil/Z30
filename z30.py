@@ -73,8 +73,13 @@ def main():
         )
         log_monitor_thread.start()
         
-        # Notez que nous n'utilisons plus le wrapper de message ici, car nous avons déjà défini
-        # directement le callback ci-dessus. Si on définissait un wrapper, il écraserait notre callback.
+        # Ajouter un thread pour la lecture directe des logs et le traitement des commandes
+        direct_command_thread = threading.Thread(
+            target=direct_command_processing,
+            args=(MINECRAFT_LOG_FILE, client, command_handler),
+            daemon=True
+        )
+        direct_command_thread.start()
         
         # Set join/leave event handler
         client.on_join_leave = relay.handle_join_leave
@@ -99,6 +104,56 @@ def main():
         return 1
     
     return 0
+
+def direct_command_processing(log_file_path, client, command_handler):
+    """Traite directement les commandes à partir du fichier log (comme dans l'ancienne version)"""
+    logger = logging.getLogger('minecraft_bot.direct_commands')
+    logger.info("Starting direct command processing from log file")
+    
+    # Regex pattern pour détecter les commandes 
+    command_pattern = re.compile(
+        r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} '
+        r'(?P<channel>.*?)\s*>\s*'
+        r'(?:\[(?P<rank>.*?)\]\s*)?'
+        r'(?P<sender>.*?)\s*(?:\[(?P<gm>GM)\])?\s*:\s*'
+        r'(?P<message>.*)',
+        re.UNICODE
+    )
+    
+    from config.settings import BOT_USERNAME
+    
+    try:
+        with open(log_file_path, 'r', encoding='utf-8') as log_file:
+            # Aller à la fin du fichier pour ne lire que les nouvelles entrées
+            log_file.seek(0, os.SEEK_END)
+            
+            while True:
+                line = log_file.readline().strip()
+                if not line:
+                    time.sleep(0.1)  # Éviter la consommation CPU excessive
+                    continue
+                    
+                # Traiter la ligne pour détecter une commande
+                match = command_pattern.search(line)
+                if match:
+                    channel = match.group('channel').strip()
+                    sender = match.group('sender').strip()
+                    message = match.group('message').strip()
+                    
+                    # Nettoyage de sender (enlever GM, etc.)
+                    cleaned_sender = re.sub(r'\s*\[.*?\]\s*', '', sender).strip()
+                    
+                    # Vérifier que ce n'est pas un message du bot lui-même
+                    if channel == "Guild" and cleaned_sender != BOT_USERNAME:
+                        logger.info(f"Direct command processing: {cleaned_sender}: {message}")
+                        
+                        # Appeler directement process_command du command_handler
+                        command_handler.process_command(channel, cleaned_sender, message)
+    
+    except Exception as e:
+        logger.error(f"Error in direct command processing: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
     sys.exit(main())
