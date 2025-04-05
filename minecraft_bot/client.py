@@ -1,3 +1,4 @@
+# minecraft_bot/client.py
 import subprocess
 import threading
 import time
