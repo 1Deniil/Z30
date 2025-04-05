@@ -7,6 +7,7 @@ import psutil
 import colorama
 import logging
 import threading
+import re
 
 from config.settings import MINECRAFT_CLIENT_PATH, MINECRAFT_LOG_FILE, LOCK_FILE
 from shared.logging_utils import setup_logger
@@ -39,31 +40,45 @@ def main():
     try:
         # Initialize Minecraft client
         client = MinecraftClient()
+        logger.info("Minecraft client initialized")
         
         # Initialize command handler
         command_handler = CommandHandler(client)
-        
-        # IMPORTANT: Définir le callback pour les messages de chat AVANT de démarrer quoi que ce soit
-        # C'est cette ligne qui était probablement manquante ou mal placée
-        client.on_chat_message = command_handler.process_command
+        logger.info("Command handler initialized")
         
         # Initialize Discord relay
         relay = MinecraftDiscordRelay(client)
+        logger.info("Discord relay initialized")
         
         # Initialize online players tracker
         tracker = OnlinePlayersTracker(client)
+        logger.info("Online players tracker initialized")
         
         # Start the client
         client.start()
+        logger.info("Minecraft client started")
         
-        # Start command handler
+        # IMPORTANT: Configure les observateurs après le démarrage du client
+        # Ajouter l'observateur du command handler directement
+        client.register_chat_observer(command_handler.process_command)
+        logger.info("Command handler registered as chat observer")
+        
+        # Démarrer le gestionnaire de commandes
         command_handler.start()
+        logger.info("Command handler started")
         
-        # Start relay
+        # Démarrer le relay (qui s'enregistre comme observateur)
         relay.start()
+        logger.info("Discord relay started")
         
         # Start online players tracker
         tracker.start()
+        logger.info("Online players tracker started")
+        
+        # Log the registered observers for debugging
+        logger.info(f"Number of chat observers: {len(client.chat_observers)}")
+        for i, observer in enumerate(client.chat_observers):
+            logger.info(f"Chat observer {i}: {observer.__qualname__ if hasattr(observer, '__qualname__') else type(observer).__name__}")
         
         # Start log file monitoring thread
         log_monitor_thread = threading.Thread(
@@ -72,6 +87,7 @@ def main():
             daemon=True
         )
         log_monitor_thread.start()
+        logger.info("Log file monitoring started")
         
         # Ajouter un thread pour la lecture directe des logs et le traitement des commandes
         direct_command_thread = threading.Thread(
@@ -80,9 +96,7 @@ def main():
             daemon=True
         )
         direct_command_thread.start()
-        
-        # Set join/leave event handler
-        client.on_join_leave = relay.handle_join_leave
+        logger.info("Direct command processing started as backup")
         
         # Main loop - keep running until interrupted
         try:
@@ -106,7 +120,7 @@ def main():
     return 0
 
 def direct_command_processing(log_file_path, client, command_handler):
-    """Traite directement les commandes à partir du fichier log (comme dans l'ancienne version)"""
+    """Traite directement les commandes à partir du fichier log (comme backup)"""
     logger = logging.getLogger('minecraft_bot.direct_commands')
     logger.info("Starting direct command processing from log file")
     
@@ -145,10 +159,20 @@ def direct_command_processing(log_file_path, client, command_handler):
                     
                     # Vérifier que ce n'est pas un message du bot lui-même
                     if channel == "Guild" and cleaned_sender != BOT_USERNAME:
-                        logger.info(f"Direct command processing: {cleaned_sender}: {message}")
+                        logger.info(f"Direct command processing detected: {cleaned_sender}: {message}")
                         
-                        # Appeler directement process_command du command_handler
-                        command_handler.process_command(channel, cleaned_sender, message)
+                        # Vérifier si ce message a été traité par les observateurs normaux
+                        # En attendant un court instant pour laisser le temps aux observateurs de traiter
+                        time.sleep(0.5)
+                        
+                        # Ensuite, on appelle process_command comme backup au cas où ça n'a pas été traité
+                        try:
+                            result = command_handler.process_command(channel, cleaned_sender, message)
+                            logger.info(f"Direct command result: {result}")
+                        except Exception as e:
+                            logger.error(f"Error processing direct command: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
     
     except Exception as e:
         logger.error(f"Error in direct command processing: {e}")

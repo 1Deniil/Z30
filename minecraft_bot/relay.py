@@ -25,32 +25,10 @@ class MinecraftDiscordRelay:
         self.app = Flask(__name__)
         self.setup_routes()
         
-        # Sauvegarde du callback existant (s'il existe)
-        self.original_chat_callback = self.minecraft_client.on_chat_message
-        
-        # Set up callback for Minecraft -> Discord
-        # Utiliser une méthode de wrapper au lieu de remplacer directement
-        self._setup_chat_callback()
-        
         # Thread management
         self.processing_thread = None
         self.flask_thread = None
         self.running = False
-        
-    def _setup_chat_callback(self):
-    """Configure le callback pour les messages du chat"""
-    original_callback = self.minecraft_client.on_chat_message
-    
-    def chat_message_wrapper(channel, sender, message):
-        # D'abord appeler notre propre handler
-        self.handle_chat_message(channel, sender, message)
-        
-        # Puis appeler le callback original s'il existe
-        if original_callback:
-            original_callback(channel, sender, message)
-    
-    # Définir notre wrapper comme nouveau callback
-    self.minecraft_client.on_chat_message = chat_message_wrapper
     
     def setup_routes(self):
         """Sets up Flask routes for the webhook"""
@@ -74,12 +52,49 @@ class MinecraftDiscordRelay:
             logger.info(f"Discord message received: {username}: {content}")
             return jsonify({"status": "success"}), 200
     
+    def handle_chat_message(self, channel, sender, message):
+        """Handles messages from Minecraft to relay to Discord"""
+        if channel != "Guild":
+            return
+        
+        # Check if it's a Discord message to avoid loops
+        if "[DC]" in sender or "[DC]" in message:
+            logger.info(f"Discord message ignored: {sender}: {message}")
+            return
+        
+        # Format full message for Discord
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        full_message = f"{timestamp} {channel} > {sender}: {message}"
+        
+        # Convert to ANSI for Discord
+        ansi_message = self.convert_minecraft_to_ansi(full_message)
+        
+        # Send to Discord
+        self.send_to_discord(ansi_message)
+        
+        # Nous ne retournons pas True/False ici - le pattern d'observateur n'interrompt pas la chaîne
+        
+    def handle_join_leave(self, player_name, action):
+        """Handles player join/leave events"""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        full_message = f"{timestamp} Guild > {player_name} {action}."
+        
+        # Apply color formatting
+        colored_message = self.convert_minecraft_to_ansi(full_message)
+        
+        # Send to Discord
+        self.send_to_discord(colored_message)
+    
     def start(self):
         """Starts the relay"""
         if self.running:
             return
         
         self.running = True
+        
+        # IMPORTANT: Enregistrer nos observateurs au démarrage
+        self.minecraft_client.register_chat_observer(self.handle_chat_message)
+        self.minecraft_client.register_join_leave_observer(self.handle_join_leave)
         
         # Start message processing thread
         self.processing_thread = threading.Thread(
@@ -116,37 +131,6 @@ class MinecraftDiscordRelay:
             self.discord_queue.put(None)
         
         logger.info("Discord relay stopped")
-    
-    def handle_chat_message(self, channel, sender, message):
-        """Handles messages from Minecraft to relay to Discord"""
-        if channel != "Guild":
-            return
-        
-        # Check if it's a Discord message to avoid loops
-        if "[DC]" in sender or "[DC]" in message:
-            logger.info(f"Discord message ignored: {sender}: {message}")
-            return
-        
-        # Format full message for Discord
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        full_message = f"{timestamp} {channel} > {sender}: {message}"
-        
-        # Convert to ANSI for Discord
-        ansi_message = self.convert_minecraft_to_ansi(full_message)
-        
-        # Send to Discord
-        self.send_to_discord(ansi_message)
-    
-    def handle_join_leave(self, player_name, action):
-        """Handles player join/leave events"""
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        full_message = f"{timestamp} Guild > {player_name} {action}."
-        
-        # Apply color formatting
-        colored_message = self.convert_minecraft_to_ansi(full_message)
-        
-        # Send to Discord
-        self.send_to_discord(colored_message)
     
     def convert_minecraft_to_ansi(self, message):
         """Converts Minecraft color codes to ANSI codes for Discord"""

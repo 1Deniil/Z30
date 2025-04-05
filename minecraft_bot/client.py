@@ -4,6 +4,7 @@ import time
 import re
 import logging
 import random
+import os
 from queue import Queue, Empty
 
 from config.settings import MINECRAFT_CLIENT_PATH, BOT_USERNAME
@@ -24,15 +25,56 @@ class MinecraftClient:
         self.command_queue = Queue()
         self.last_sent_lock = threading.Lock()
         
-        # Callbacks pour les événements
-        self.on_chat_message = None  # Pour les messages du chat
-        self.on_join_leave = None    # Pour les événements de connexion/déconnexion
+        # Liste d'observateurs pour les événements
+        self.chat_observers = []
+        self.join_leave_observers = []
+    
+    def register_chat_observer(self, callback):
+        """Ajouter un observateur pour les messages du chat"""
+        if callback not in self.chat_observers:
+            self.chat_observers.append(callback)
+            logger.info(f"Chat observer registered: {callback.__qualname__ if hasattr(callback, '__qualname__') else type(callback).__name__}")
+    
+    def register_join_leave_observer(self, callback):
+        """Ajouter un observateur pour les événements de connexion/déconnexion"""
+        if callback not in self.join_leave_observers:
+            self.join_leave_observers.append(callback)
+            logger.info(f"Join/leave observer registered: {callback.__qualname__ if hasattr(callback, '__qualname__') else type(callback).__name__}")
+    
+    @property
+    def on_chat_message(self):
+        """Pour compatibilité avec l'ancien code"""
+        return self.chat_observers[0] if self.chat_observers else None
+    
+    @on_chat_message.setter
+    def on_chat_message(self, callback):
+        """Pour compatibilité avec l'ancien code"""
+        self.chat_observers = [callback] if callback else []
+        logger.info(f"Chat callback set: {callback.__qualname__ if callback and hasattr(callback, '__qualname__') else None}")
+    
+    @property
+    def on_join_leave(self):
+        """Pour compatibilité avec l'ancien code"""
+        return self.join_leave_observers[0] if self.join_leave_observers else None
+    
+    @on_join_leave.setter
+    def on_join_leave(self, callback):
+        """Pour compatibilité avec l'ancien code"""
+        self.join_leave_observers = [callback] if callback else []
     
     def start(self):
         """Démarre le client Minecraft"""
         logger.info(f"Démarrage du client Minecraft...")
         
         try:
+            # Vérifier que le chemin du client existe
+            if not os.path.exists(MINECRAFT_CLIENT_PATH):
+                logger.error(f"Chemin du client Minecraft invalide: {MINECRAFT_CLIENT_PATH}")
+                logger.error(f"Répertoire courant: {os.getcwd()}")
+                logger.error(f"Contenu du répertoire: {os.listdir('.')}")
+                raise FileNotFoundError(f"Client Minecraft introuvable: {MINECRAFT_CLIENT_PATH}")
+                
+            # Démarrer le processus
             self.process = subprocess.Popen(
                 [MINECRAFT_CLIENT_PATH],
                 stdin=subprocess.PIPE,
@@ -60,6 +102,8 @@ class MinecraftClient:
             
         except Exception as e:
             logger.error(f"Erreur lors du démarrage du client Minecraft: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def _start_threads(self):
@@ -139,11 +183,10 @@ class MinecraftClient:
                     output
                 )
                 if join_leave_match:
-                    if self.on_join_leave:
-                        self.on_join_leave(
-                            join_leave_match.group('name'),
-                            join_leave_match.group('action')
-                        )
+                    self._handle_join_leave(
+                        join_leave_match.group('name'),
+                        join_leave_match.group('action')
+                    )
                 
                 # Message double ?
                 if "You cannot say the same message twice!" in output:
@@ -151,9 +194,11 @@ class MinecraftClient:
             
             except Exception as e:
                 logger.error(f"Erreur lors de la lecture de la sortie: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
     
     def _handle_chat_message(self, channel, sender, message):
-        """Message rent"""
+        """Traite les messages du chat et informe les observateurs"""
         self.last_sender = sender
         
         # Log plus détaillé pour debugger
@@ -174,13 +219,24 @@ class MinecraftClient:
             
             logger.info(f"EXTRACTED COMMAND: '{command}' with args: '{args}'")
             
-            # Appeler le callback si défini
-            if self.on_chat_message:
-                logger.info(f"Calling on_chat_message callback - type: {type(self.on_chat_message).__name__}")
-                # Utiliser le sender nettoyé
-                self.on_chat_message(channel, cleaned_sender, message)
-            else:
-                logger.warning(f"NO CALLBACK DEFINED for on_chat_message")
+            # Appeler tous les observateurs
+            for observer in self.chat_observers:
+                try:
+                    logger.debug(f"Calling observer: {type(observer).__name__}")
+                    result = observer(channel, cleaned_sender, message)
+                    logger.debug(f"Observer result: {result}")
+                except Exception as e:
+                    logger.error(f"Error in chat observer: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+    
+    def _handle_join_leave(self, player_name, action):
+        """Traite les événements de connexion/déconnexion et informe les observateurs"""
+        for observer in self.join_leave_observers:
+            try:
+                observer(player_name, action)
+            except Exception as e:
+                logger.error(f"Error in join/leave observer: {e}")
     
     def _handle_duplicate_message(self):
         """Gère le cas où un message est refusé car identique au précédent"""
