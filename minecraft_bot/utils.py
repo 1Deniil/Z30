@@ -266,3 +266,65 @@ class OnlinePlayersTracker:
                 })
         
         return embed
+
+    def process_commands_from_log(log_file_path, client, command_handler):
+    """Traite directement les commandes à partir du fichier log"""
+    logger = logging.getLogger('minecraft_bot.log_parser')
+    logger.info("Starting command processing from log file")
+    
+    from config.settings import BOT_USERNAME
+    
+    # Pattern pour détecter les commandes
+    pattern = re.compile(
+        r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} '
+        r'(?P<channel>.*?)\s*>\s*'
+        r'(?:\[.*?\]\s*)?'
+        r'(?P<sender>.*?)\s*(?:\[.*?\])?\s*:\s*'
+        r'(?P<command>\b\w+\b)\s*'
+        r'(?P<args>.*)',
+        re.UNICODE
+    )
+    
+    try:
+        with open(log_file_path, 'r', encoding='utf-8') as log_file:
+            # Aller à la fin du fichier pour ne lire que les nouvelles entrées
+            log_file.seek(0, os.SEEK_END)
+            
+            while True:
+                line = log_file.readline().strip()
+                if not line:
+                    time.sleep(0.1)  # Éviter la consommation CPU excessive
+                    continue
+                
+                # Nettoyer la ligne des codes couleur Minecraft
+                cleaned_line = re.sub(r'§.', '', line)
+                
+                # Rechercher les commandes
+                match = pattern.search(cleaned_line)
+                if match:
+                    channel = match.group('channel').strip()
+                    sender = match.group('sender').strip()
+                    command = match.group('command').strip()
+                    args = match.group('args').strip()
+                    
+                    # Nettoyage du sender (enlever GM, etc.)
+                    cleaned_sender = re.sub(r'\s*\[.*?\]\s*', '', sender).strip()
+                    
+                    # Vérifier que ce n'est pas un message du bot lui-même
+                    if channel == "Guild" and cleaned_sender != BOT_USERNAME:
+                        logger.info(f"COMMAND DETECTED: {cleaned_sender}: {command} {args}")
+                        
+                        # Traiter directement la commande
+                        message = f"{command} {args}"
+                        try:
+                            result = command_handler.process_command(channel, cleaned_sender, message)
+                            logger.info(f"Command result: {result}")
+                        except Exception as e:
+                            logger.error(f"Error processing command: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+    
+    except Exception as e:
+        logger.error(f"Error in log parser: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
